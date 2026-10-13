@@ -1,0 +1,15 @@
+{
+  "name": "notion2api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local OpenAI-compatible adapter for your own authenticated Notion AI workspace",
+  "engines": { "node": ">=22.16" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.mjs",
+    "test": "node --test",
+    "smoke": "node --env-file-if-exists=.env scripts/smoke.mjs",
+    "doctor": "node --env-file-if-exists=.env scripts/doctor.mjs"
+  },
+  "license": "MIT"
+}
