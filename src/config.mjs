@@ -26,14 +26,18 @@ export async function loadConfig({ env = process.env, root = projectRoot } = {})
   if (!['127.0.0.1', '::1'].includes(host)) throw new Error('此版本只允许本机监听：HOST=127.0.0.1 或 ::1。');
   const port = Number(env.PORT || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT 必须为 1 至 65535。');
+  const transport = env.NOTION_TRANSPORT || 'direct';
+  if (!['direct', 'browser'].includes(transport)) throw new Error('NOTION_TRANSPORT 必须为 direct 或 browser。');
+  if (transport === 'browser' && (host !== '127.0.0.1' || port !== 8787)) throw new Error('当前浏览器扩展只支持 HOST=127.0.0.1、PORT=8787。');
   return {
-    host, port, apiKey,
+    host, port, apiKey, transport,
     tokenV2: env.NOTION_TOKEN_V2 || session.tokenV2,
     userId: env.NOTION_USER_ID || session.userId,
     spaceId: env.NOTION_SPACE_ID || session.spaceId,
     clientVersion: session.clientVersion,
     deviceId: session.deviceId,
     browserId: session.browserId,
+    cellHint: session.cellHint,
     sessionPath: path.join(local, 'notion-session.json'),
     apiKeyPath: path.join(local, 'api-key.txt')
   };

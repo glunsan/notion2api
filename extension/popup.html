@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Notion2API 本地桥接</title>
+<style>body{width:320px;margin:20px;font:14px/1.6 system-ui;color:#242424}h1{font-size:19px;margin:0 0 8px}p{color:#606060}label{display:block;margin-top:14px}input,select,button{box-sizing:border-box;width:100%;padding:9px;border:1px solid #ccc;border-radius:7px;font:inherit}button{margin-top:14px;cursor:pointer}#connect{background:#242424;color:white}#status{white-space:pre-wrap;font-size:12px}small{display:block;color:#606060;margin-top:12px}</style></head>
+<body><h1>Notion2API 本地桥接</h1><p>登录会话留在 Notion 标签页内。保持所选页面打开。</p>
+<label>本地 API 密钥<input id="key" type="password" autocomplete="off" spellcheck="false"></label>
+<label>已登录的 Notion 页面<select id="tabs"></select></label>
+<button id="open">打开 Notion</button><button id="connect">连接本地桥接</button><button id="stop">停止连接</button>
+<p id="status"></p><small>服务地址固定为 127.0.0.1:8787。连接成功后仍需真实生成测试。</small><script src="popup.js" type="module"></script></body></html>

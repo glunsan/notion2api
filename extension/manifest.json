@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Notion2API Local Bridge",
+  "version": "0.2.0",
+  "description": "Use your signed-in Notion tab as the transport for your own local text API. Login cookies stay in the browser.",
+  "permissions": ["storage", "scripting", "alarms"],
+  "host_permissions": ["https://app.notion.com/*", "http://127.0.0.1/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_popup": "popup.html"},
+  "content_scripts": [{"matches": ["https://app.notion.com/*"], "js": ["content.js"], "run_at": "document_start"}]
+}

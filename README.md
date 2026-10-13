@@ -2,7 +2,9 @@
 
 把本人登录的 Notion AI 工作区接到本机 OpenAI Chat Completions 接口的**实验项目**，Node.js 24，无运行依赖。
 
-> **当前状态：尚未打通真实 AI 生成。** 本地 31 项测试通过，真实 Notion 工作区认证和读取测试对话通过；但本账号的新版 AI 创建/发送接口持续返回 `400 UserValidationError`，旧版推理接口在 HTTP 200 中返回 `temporarily-unavailable`。网页端 Notion AI 正常。不要把本仓库当作已成功代理额度的可用服务，也不要凭 `/health` 的 `ready` 判断 AI 可用。
+> **当前状态：尚未打通真实 API 生成。** 正常 Notion 页面生成通过，已抓到桌面版成功的创建请求；Node 直连复测仍返回 `400 UserValidationError`。浏览器桥接与 OpenCodex 接入代码已准备，扩展启用、真实生成和最终 OpenCodex 调用仍待验证。不要把代码测试或 `/health` 的 `ready` 当作额度已代理的证据。
+
+用户希望使用 OpenCodex 时，见 [浏览器桥接与 OpenCodex](docs/browser-bridge.md)。当前 OpenCodex 没有 Notion 内置适配器；接入脚本只有在真实生成挑战成功后才注册独立上游。
 
 ## 启动
 
@@ -58,7 +60,7 @@ Invoke-RestMethod 'http://127.0.0.1:8787/v1/chat/completions' `
 ## 验证
 
 ```powershell
-npm test        # 31 个本地协议/解析/失败处理测试，不消耗 Notion 额度
+npm test        # 本地协议/浏览器桥接/解析/失败处理测试，不消耗 Notion 额度
 npm run doctor # 真实工作区登录验证，不进行 AI 推理
 npm run smoke  # 真实 AI 请求；失败会以非零退出码结束
 ```

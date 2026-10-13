@@ -344,6 +344,11 @@ export function createServer({
         const ready = provider.ready === true;
         return sendJson(res, 200, { status: ready ? 'ok' : 'not_ready', ready });
       }
+      if (path?.startsWith('/bridge/') && typeof provider.handle === 'function') {
+        if (req.method !== 'OPTIONS') authenticate(req);
+        if (await provider.handle(req, res)) return;
+        throw new HttpError(404, 'not_found', 'Route not found.');
+      }
       const modelsRoute = req.method === 'GET' && path === '/v1/models';
       const chatRoute = req.method === 'POST' && path === '/v1/chat/completions';
       if (!modelsRoute && !chatRoute) throw new HttpError(404, 'not_found', 'Route not found.');
