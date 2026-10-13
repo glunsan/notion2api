@@ -43,11 +43,11 @@ Invoke-RestMethod 'http://127.0.0.1:8787/v1/chat/completions' `
   -ContentType 'application/json; charset=utf-8' -Body $payload
 ```
 
-真实接通测试：先启动服务，再运行 `npm run smoke`。它最多发起两次 AI 请求，分别检查非流式和流式模式，首个失败即停止。当前本账号预期会返回上游 400，而不是成功答案。
+真实接通测试：先启动服务，再运行 `npm run smoke`。它最多发起两次 AI 请求，分别检查非流式和流式模式，首个失败即停止。当前直连模式仍返回上游 400；浏览器模式尚未连接扩展时返回 503，实际生成还需启用扩展后验证。
 
 ## 范围与限制
 
-- `GET /health` 表示服务和本地配置状态；`ready: true` 只表示三项会话配置齐全。
+- `GET /health` 表示服务和本地配置状态；直连模式 `ready: true` 仅表示会话配置齐全，浏览器模式还要求有效的扩展连接。两者都不证明 AI 生成可用。
 - `GET /v1/models` 和 `POST /v1/chat/completions` 需要 Bearer 密钥。
 - 支持文本 `system/user/assistant` messages；历史会作为引用文本提交到 Notion。`system` 不能覆盖 Notion 自己的上游系统指令。
 - 支持 JSON 和 SSE 响应；SSE 从上游文本补丁追加输出，失败时输出错误，不发送成功 `[DONE]`。
