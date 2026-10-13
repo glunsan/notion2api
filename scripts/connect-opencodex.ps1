@@ -122,9 +122,10 @@ function Initialize-OcxCli([string]$ShimPath) {
         throw 'This script was verified for OpenCodex 2.81.0; review the installed CLI contract before registration.'
     }
     $accountHelp = Invoke-OcxCli @('help', 'account', 'add-key') -TextOnly
-    $applyHelp = Invoke-OcxCli @('help', 'provider', 'apply') -TextOnly
-    if ($accountHelp -notmatch 'non-TTY stdin' -or $applyHelp -notmatch 'public-baseline conflict check') {
-        throw 'The installed CLI does not advertise the required stdin/CAS contracts.'
+    $script:OcxInstallRoot = Join-Path $installRoot 'node_modules\@bitkyc08\opencodex'
+    $script:OcxBun = Join-Path $script:OcxInstallRoot 'node_modules\bun\bin\bun.exe'
+    if ($accountHelp -notmatch 'non-TTY stdin' -or -not (Test-Path -LiteralPath $script:OcxBun -PathType Leaf)) {
+        throw 'The installed CLI/runtime does not match the verified stdin and management contracts.'
     }
 }
 
@@ -143,6 +144,10 @@ function Invoke-OcxCli([string[]]$Arguments, [string]$InputText, [switch]$TextOn
     foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
+    $diagnostic = 'unknown_cli_failure'
+    $stage = if ($Arguments.Count -ge 2 -and $Arguments[0] -in @('provider', 'account')) {
+        $Arguments[0] + ' ' + $Arguments[1]
+    } else { 'preflight' }
     try {
         [void]$process.Start()
         $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -154,12 +159,29 @@ function Invoke-OcxCli([string[]]$Arguments, [string]$InputText, [switch]$TextOn
             throw 'CLI timeout; write outcome may be unknown.'
         }
         $raw = $stdout.GetAwaiter().GetResult()
-        [void]$stderr.GetAwaiter().GetResult()
-        if ($process.ExitCode -ne 0) { throw 'CLI returned a nonzero exit; write outcome may be partial.' }
+        $errorText = $stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            $knownErrors = [ordered]@{
+                'Provider batch input must be an editable provider snapshot' = 'invalid_editor_snapshot'
+                'Provider baseline is stale.' = 'stale_provider_editor_baseline'
+                'The target refused the provider configuration.' = 'invalid_provider'
+                'The proposed provider configuration is invalid.' = 'invalid_provider_editor_config'
+                'The target refused a provider destination.' = 'invalid_provider_destination'
+                'Unable to read JSON input' = 'json_input_read_failed'
+                'JSON input must contain valid JSON' = 'invalid_json_input'
+                'Provider apply requires --baseline FILE' = 'invalid_apply_arguments'
+                'Provider operation did not return a usable outcome.' = 'invalid_cli_receipt'
+                'The provider request failed.' = 'management_request_failed'
+            }
+            foreach ($known in $knownErrors.Keys) {
+                if ($errorText.Contains($known)) { $diagnostic = $knownErrors[$known]; break }
+            }
+            throw 'CLI returned a nonzero exit; write outcome may be partial.'
+        }
         if ($TextOnly) { return $raw }
         return ConvertFrom-Json -InputObject $raw -AsHashtable -Depth 100
     } catch {
-        throw 'OpenCodex CLI operation failed. Inspect the current target before retrying; no rollback is implied. Raw output is withheld.'
+        throw "OpenCodex CLI operation failed at $stage ($diagnostic). Inspect the current target before retrying; no rollback is implied. Raw output is withheld."
     } finally { $process.Dispose() }
 }
 
@@ -188,17 +210,42 @@ function Assert-OwnedRow($Snapshot, $ExpectedRow, [string]$DefaultProvider) {
     }
 }
 
-function Invoke-ProviderApply($Baseline, $Next, [string]$BridgeRoot) {
-    # CLI permits only one stdin document. This unique, NON-SECRET baseline is removed in finally.
-    $baselinePath = Join-Path (Join-Path $BridgeRoot '.local') ('.ocx-public-baseline-' + [Guid]::NewGuid().ToString('N') + '.json')
+function Invoke-SingleProviderChange($Baseline, $Row, [string]$Operation, [string]$BridgeRoot) {
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $script:OcxBun
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+    $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    $start.ArgumentList.Add((Join-Path $BridgeRoot 'scripts\ocx-single-provider.mjs'))
+    $start.ArgumentList.Add($script:OcxInstallRoot)
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
     try {
-        [IO.File]::WriteAllText($baselinePath, ($Baseline | ConvertTo-Json -Depth 100 -Compress), [Text.UTF8Encoding]::new($false))
-        $receipt = Invoke-OcxCli @('provider', 'apply', '--baseline', $baselinePath, '--file', '-', '--json') `
-            -InputText ($Next | ConvertTo-Json -Depth 100 -Compress)
-        if ($receipt.success -ne $true) { throw 'Provider apply did not return a successful receipt.' }
-    } finally {
-        if ([IO.File]::Exists($baselinePath)) { [IO.File]::Delete($baselinePath) }
-    }
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.WriteLine((@{ operation=$Operation; baseline=$Baseline; row=$Row } | ConvertTo-Json -Depth 100 -Compress))
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(120000)) { $process.Kill($true); throw 'Scoped registration timed out; inspect current state.' }
+        $raw = $stdout.GetAwaiter().GetResult()
+        $diagnosticRaw = $stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            $safeStage = 'unknown'; $safeCode = 'unknown'
+            try {
+                $diagnostic = $diagnosticRaw | ConvertFrom-Json -AsHashtable
+                if ($diagnostic.stage -in @('preflight','locate','read','create','enable','readback')) { $safeStage = $diagnostic.stage }
+                if ($diagnostic.code -in @('unsupported_install','input_too_large','invalid_input','invalid_row','nonlocal_management','invalid_snapshot','stale_baseline','provider_exists','ownership_changed','invalid_receipt','readback_changed','management_operation_failed')) { $safeCode = $diagnostic.code }
+            } catch {}
+            throw "Scoped provider operation failed at $safeStage ($safeCode); inspect current state before retrying. Raw output withheld."
+        }
+        $receipt = $raw | ConvertFrom-Json -AsHashtable
+        if ($receipt.success -ne $true) { throw 'Scoped registration receipt invalid.' }
+    } finally { $process.Dispose() }
 }
 
 function Connect-Notion2Api([string]$BridgeRoot, [string]$Url, [string]$ModelId, [string]$ShimPath, [int]$Timeout, [bool]$DoRegister) {
@@ -221,16 +268,16 @@ function Connect-Notion2Api([string]$BridgeRoot, [string]$Url, [string]$ModelId,
         }
         $default = $baseline.defaultProvider
         $row = [ordered]@{
-            adapter = 'openai-chat'; baseUrl = $url; authMode = 'key'; apiKeyTransport = 'bearer'
+            # openai-chat already sends Bearer. OpenCodex's apiKeyTransport override
+            # belongs to its anthropic adapter and is rejected on openai-chat.
+            adapter = 'openai-chat'; baseUrl = $url; authMode = 'key'
             allowPrivateNetwork = $true; defaultModel = $ModelId
             models = @($ModelId); selectedModels = @($ModelId)
             modelCapabilities = @{ $ModelId = @{ inputModalities = @('text') } }
             disabled = $true
             note = 'Notion2API localhost bridge; connect-opencodex.ps1 registration ' + [Guid]::NewGuid().ToString('N')
         }
-        $next = $baseline | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json -AsHashtable -Depth 100
-        $next.providers['notion2api'] = $row
-        Invoke-ProviderApply $baseline $next $BridgeRoot
+        Invoke-SingleProviderChange $baseline $row 'create' $BridgeRoot
         $created = Invoke-OcxCli @('provider', 'snapshot', '--json')
         Assert-OwnedRow $created $row $default
         $beforeKey = Invoke-OcxCli @('account', 'current', 'notion2api', '--json')
@@ -242,9 +289,7 @@ function Connect-Notion2Api([string]$BridgeRoot, [string]$Url, [string]$ModelId,
         if ($activeKey.activeId -cne $keyReceipt.id) { throw 'Imported key is not active; provider will remain disabled.' }
         $enableBaseline = Invoke-OcxCli @('provider', 'snapshot', '--json')
         Assert-OwnedRow $enableBaseline $row $default
-        $enableNext = $enableBaseline | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json -AsHashtable -Depth 100
-        $enableNext.providers['notion2api'].disabled = $false
-        Invoke-ProviderApply $enableBaseline $enableNext $BridgeRoot
+        Invoke-SingleProviderChange $enableBaseline $row 'enable' $BridgeRoot
         $row.disabled = $false
         $final = Invoke-OcxCli @('provider', 'snapshot', '--json')
         Assert-OwnedRow $final $row $default

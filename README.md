@@ -2,7 +2,7 @@
 
 把本人登录的 Notion AI 工作区接到本机 OpenAI Chat Completions 接口的**实验项目**，Node.js 24，无运行依赖。
 
-> **当前状态：尚未打通真实 API 生成。** 正常 Notion 页面生成通过，已抓到桌面版成功的创建请求；Node 直连复测仍返回 `400 UserValidationError`。浏览器桥接与 OpenCodex 接入代码已准备，扩展启用、真实生成和最终 OpenCodex 调用仍待验证。不要把代码测试或 `/health` 的 `ready` 当作额度已代理的证据。
+> **当前状态：本人 Notion 额度已通过本地 API 和 OpenCodex 真实调用。** 普通 JSON 和 SSE 流式请求均返回 `NOTION2API_OK`，流式正常结束；78 项本地测试通过。经 OpenCodex `notion2api/notion-auto` 的 Responses 请求也返回 HTTP 200、`completed`，随机挑战答案完全匹配。默认上游保持 `openai`。浏览器扩展 0.2.1 已修复取队列 403，更新代码后需要在 Chrome 扩展管理页重新加载。
 
 用户希望使用 OpenCodex 时，见 [浏览器桥接与 OpenCodex](docs/browser-bridge.md)。当前 OpenCodex 没有 Notion 内置适配器；接入脚本只有在真实生成挑战成功后才注册独立上游。
 
@@ -16,10 +16,10 @@ python -m pip install cryptography
 # 先完全退出桌面版 Notion；只导入自己的正常登录会话。
 python scripts/import-notion-session.py --output .local/notion-session.json
 npm run doctor -- --workspace "你的工作区名称"
-npm start
+pwsh.exe -NoProfile -File scripts/start-browser-bridge.ps1
 ```
 
-也可以复制 `.env.example` 为本地 `.env`，填写自己的 `NOTION_TOKEN_V2`、`NOTION_USER_ID`、`NOTION_SPACE_ID`。Notion 官方 integration token（`ntn_...`）不能替代网页会话。
+之后按 [Chrome 扩展步骤](docs/browser-bridge.md#chrome-扩展)加载扩展并连接本人已登录页面。也可以复制 `.env.example` 为本地 `.env`，填写自己的工作区/user ID。浏览器模式不会将会话文件中的 Cookie 发给上游；直连模式使用 `NOTION_TOKEN_V2`，本账号实测仍返回上游 400。Notion 官方 integration token（`ntn_...`）不能替代网页会话。
 
 服务只允许监听本机 `127.0.0.1` 或 `::1`，默认端口 `8787`。首次运行自动生成 `.local/api-key.txt`，作为客户端 Bearer API key。`.local/` 和 `.env` 已加入 `.gitignore`；不要上传登录数据、HAR、Cookie 数据库或原始上游响应。
 
@@ -43,7 +43,7 @@ Invoke-RestMethod 'http://127.0.0.1:8787/v1/chat/completions' `
   -ContentType 'application/json; charset=utf-8' -Body $payload
 ```
 
-真实接通测试：先启动服务，再运行 `npm run smoke`。它最多发起两次 AI 请求，分别检查非流式和流式模式，首个失败即停止。当前直连模式仍返回上游 400；浏览器模式尚未连接扩展时返回 503，实际生成还需启用扩展后验证。
+真实接通测试：先启动服务并连接扩展，再运行 `npm run smoke`。它最多发起两次 AI 请求，分别检查非流式和流式模式，首个失败即停止。本次浏览器模式两项通过；直连模式仍返回上游 400，浏览器模式未连接扩展时返回 503。
 
 ## 范围与限制
 

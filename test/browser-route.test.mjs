@@ -28,7 +28,8 @@ test('an authenticated simulated browser job completes through the actual OpenAI
   const { base, headers, post } = await setup(t);
   await post('/bridge/connect', { workerId });
   const completion = fetch(base + '/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model: 'notion-auto', messages: [{ role: 'user', content: 'challenge' }], stream: true }) });
-  const workerResponse = await fetch(base + '/bridge/next?workerId=' + workerId, { headers });
+  completion.catch(() => {}); // A failing dispatch assertion still tears down the pending fetch safely.
+  const workerResponse = await post('/bridge/next', { workerId });
   assert.equal(workerResponse.status, 200); const job = await workerResponse.json();
   assert.ok(job.prompt.includes('challenge')); assert.equal(Object.hasOwn(job, 'tokenV2'), false);
   assert.equal((await post('/bridge/result', { workerId, jobId: job.id, nonce: '0'.repeat(64), kind: 'delta', text: 'forged' })).status, 403);
@@ -36,6 +37,27 @@ test('an authenticated simulated browser job completes through the actual OpenAI
   assert.equal((await post('/bridge/result', { workerId, jobId: job.id, nonce: job.nonce, kind: 'done' })).status, 200);
   const response = await completion, body = await response.text();
   assert.equal(response.status, 200); assert.ok(body.includes('"content":"OK"') && body.includes('data: [DONE]')); assert.equal(body.includes('forged'), false);
+});
+
+test('extension polling uses POST without relaxing Bearer, Origin, worker binding or envelope checks', async t => {
+  const { base, headers, post } = await setup(t);
+  assert.equal((await post('/bridge/connect', { workerId })).status, 200);
+  const missingOrigin = { authorization: headers.authorization, 'content-type': 'application/json' };
+  const legacyGet = await fetch(base + '/bridge/next?workerId=' + workerId, { headers: missingOrigin });
+  assert.equal(legacyGet.status, 403);
+  assert.equal((await legacyGet.json()).error.code, 'bridge_origin_forbidden');
+  assert.equal((await post('/bridge/next', { workerId })).status, 204);
+  assert.equal((await post('/bridge/next', { workerId }, { authorization: 'Bearer wrong' })).status, 401);
+  const noOriginPost = await fetch(base + '/bridge/next', { method: 'POST', headers: missingOrigin, body: JSON.stringify({ workerId }) });
+  assert.equal(noOriginPost.status, 403);
+  assert.equal((await post('/bridge/next', { workerId }, { origin: 'https://app.notion.com' })).status, 403);
+  assert.equal((await post('/bridge/next', { workerId }, { origin: 'chrome-extension://' + 'b'.repeat(32) })).status, 403);
+  assert.equal((await post('/bridge/next', { workerId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' })).status, 403);
+  assert.equal((await post('/bridge/next', { workerId, extra: true })).status, 400);
+  assert.equal((await post('/bridge/next?workerId=' + workerId, { workerId })).status, 400);
+  const preflight = await fetch(base + '/bridge/next', { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization, content-type' } });
+  assert.equal(preflight.status, 204);
+  assert.ok(preflight.headers.get('access-control-allow-methods').includes('POST'));
 });
 test('provider shutdown invalidates readiness and forbids a late reconnect', async t => {
   const { provider, base, post } = await setup(t); await post('/bridge/connect', { workerId });

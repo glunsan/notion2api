@@ -413,26 +413,26 @@ export class BrowserRelayProvider {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       if (req.url.includes('#')) throw failure(400, 'bridge_invalid_query');
-      const method = { '/bridge/connect': 'POST', '/bridge/next': 'GET', '/bridge/result': 'POST', '/bridge/disconnect': 'POST' }[rawPath];
-      if (!method) throw failure(404, 'bridge_not_found');
+      const methods = { '/bridge/connect': ['POST'], '/bridge/next': ['GET', 'POST'], '/bridge/result': ['POST'], '/bridge/disconnect': ['POST'] }[rawPath];
+      if (!methods) throw failure(404, 'bridge_not_found');
       const query = new URLSearchParams(req.url.includes('?') ? req.url.slice(req.url.indexOf('?') + 1) : '');
-      if ((rawPath !== '/bridge/next' && query.size)
+      if (((rawPath !== '/bridge/next' || req.method === 'POST') && query.size)
         || (rawPath === '/bridge/next' && [...query.keys()].some(key => key !== 'workerId'))
         || query.getAll('workerId').length > 1) throw failure(400, 'bridge_invalid_query');
       if (req.method === 'OPTIONS') {
         const requestedMethod = req.headers['access-control-request-method'];
         const requestedHeaders = req.headers['access-control-request-headers'];
-        if ((requestedMethod !== undefined && requestedMethod !== method)
+        if ((requestedMethod !== undefined && !methods.includes(requestedMethod))
           || (requestedHeaders !== undefined && (typeof requestedHeaders !== 'string'
             || requestedHeaders.split(',').some(header => !['authorization', 'content-type'].includes(header.trim().toLowerCase()))))) {
           throw failure(400, 'bridge_invalid_preflight');
         }
-        res.setHeader('Access-Control-Allow-Methods', `${method}, OPTIONS`);
+        res.setHeader('Access-Control-Allow-Methods', `${methods.join(', ')}, OPTIONS`);
         res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
         send(res, 204);
-      } else if (req.method !== method) throw failure(400, 'bridge_invalid_method');
+      } else if (!methods.includes(req.method)) throw failure(400, 'bridge_invalid_method');
       else if (this.#closed) throw failure(503, 'notion_network_error');
-      else if (method === 'GET') {
+      else if (req.method === 'GET') {
         const id = workerId(query.get('workerId'));
         await this.#poll(req, res, this.#authenticate(id, origin));
       } else {
@@ -451,11 +451,15 @@ export class BrowserRelayProvider {
         this.#expire();
         if (res.destroyed || req.aborted) return true;
         if (this.#closed) throw failure(503, 'notion_network_error');
-        if (rawPath === '/bridge/connect' || rawPath === '/bridge/disconnect') {
+        if (rawPath === '/bridge/connect' || rawPath === '/bridge/disconnect' || rawPath === '/bridge/next') {
           // An upload begun before a stop/expiry cannot revive or stop a new session.
           if (epoch !== this.#epoch) throw failure(410, 'bridge_connection_changed');
           if (Object.keys(body).some(key => key !== 'workerId')) throw failure(400, 'bridge_invalid_connect');
           const id = workerId(body.workerId);
+          if (rawPath === '/bridge/next') {
+            await this.#poll(req, res, this.#authenticate(id, origin));
+            return true;
+          }
           if (rawPath === '/bridge/disconnect') {
             this.#authenticate(id, origin);
             this.#disconnect();

@@ -163,7 +163,7 @@ test('CORS preflight needs no Bearer, stays within exact bridge routes and check
     assert.equal(response.res.statusCode, 204);
     assert.equal(response.res.headers['access-control-allow-origin'], origin);
     assert.equal(response.res.headers.vary, 'Origin');
-    assert.equal(response.res.headers['access-control-allow-methods'], `${method}, OPTIONS`);
+    assert.equal(response.res.headers['access-control-allow-methods'], path === 'next' ? 'GET, POST, OPTIONS' : `${method}, OPTIONS`);
     assert.equal(response.res.headers['access-control-allow-credentials'], undefined);
   }
   for (const headers of [{ 'access-control-request-method': 'DELETE' }, { 'access-control-request-headers': 'x-cookie' }]) {
@@ -641,6 +641,36 @@ test('an in-flight heartbeat cannot revive the worker after user disconnect', as
   assert.equal(provider.ready, false);
   assert.equal((await connect(provider)).res.statusCode, 200);
   assert.equal(provider.ready, true);
+});
+
+test('POST next shares the poll slot, survives a normal completed body and stops promptly', async t => {
+  const { provider } = fixture(t, { waitMs: 15000 });
+  await connect(provider);
+  const pending = exchange(provider, '/bridge/next', { body: { workerId: id } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.req.complete, true);
+  assert.equal(pending.res.writableEnded, false);
+  assert.equal((await call(provider, '/bridge/next', { body: { workerId: id } })).res.statusCode, 409);
+  assert.equal((await next(provider)).res.statusCode, 409);
+  assert.equal((await call(provider, '/bridge/disconnect', { body: { workerId: id } })).res.statusCode, 200);
+  await bounded(pending.handled);
+  assert.equal(pending.res.statusCode, 503);
+  assert.equal(pending.req.listenerCount('data'), 0);
+  assert.equal(pending.req.listenerCount('close'), 0);
+  assert.equal(pending.res.listenerCount('close'), 0);
+});
+
+test('an old POST next upload cannot poll a reconnected session after Stop', async t => {
+  const { provider } = fixture(t);
+  await connect(provider);
+  const pending = exchange(provider, '/bridge/next', { manual: true });
+  await call(provider, '/bridge/disconnect', { body: { workerId: id } });
+  await connect(provider);
+  pending.req.submit([JSON.stringify({ workerId: id })]);
+  await bounded(pending.handled);
+  assert.equal(pending.res.statusCode, 410);
+  assert.equal(provider.ready, true);
+  assert.equal((await call(provider, '/bridge/next', { body: { workerId: id } })).res.statusCode, 204);
 });
 
 test('Stop has a reserved upload slot and fails work even when ordinary upload slots are full', async t => {

@@ -53,7 +53,8 @@ async function loop() {
     await connect(config);
     while ((await settings()).enabled) {
       config = await settings();
-      const response = await request('/bridge/next?workerId=' + encodeURIComponent(config.workerId), { timeoutMs: 25000 });
+      // Chrome extension GETs may omit Origin. POST keeps the server's strict Origin check.
+      const response = await request('/bridge/next', { method: 'POST', body: JSON.stringify({ workerId: config.workerId }), timeoutMs: 25000 });
       if (response.status === 204) continue;
       if (!response.ok) throw safeError('请求队列不可用（HTTP ' + response.status + '）');
       const job = await response.json();
